@@ -1,0 +1,161 @@
+{
+  "single_analysis": {
+    "symbol": "005930.KS",
+    "analysis_date": "2025-06-02",
+    "criteria": {
+      "52w_high": {
+        "is_near_high": "False",
+        "current_price": 56800.0,
+        "52w_high": 87188.49,
+        "distance_from_high": -34.85
+      },
+      "market_performance": {
+        "beta": 1.09,
+        "relative_strength_3m": -1.72,
+        "relative_strength_6m": -5.18,
+        "outperforms_market": "False"
+      },
+      "moving_average": {
+        "above_20w_ma": "True",
+        "ma20_value": 55578.79,
+        "ma20_slope": 22.2892,
+        "ma20_trending_up": "True"
+      },
+      "macd": {
+        "error": "insufficient_data"
+      },
+      "volatility": {
+        "volatility_20d": 28.04,
+        "up_days_ratio": 0.5,
+        "avg_up_return": 1.33,
+        "avg_down_return": -1.19,
+        "strength_ratio": 1.12
+      }
+    },
+    "leadership_score": {
+      "score": 2,
+      "max_score": 6,
+      "percentage": 33.3,
+      "grade": "D"
+    }
+  },
+  "caution_analysis": {
+    "sector": "반도체",
+    "analysis_date": "2025-06-02",
+    "caution_signals": {
+      "laggard_surge": {
+        "avg_laggard_return_6m": -3.31,
+        "laggard_count": 1,
+        "laggards_surge_50pct": "False",
+        "warning_signal": "False"
+      },
+      "high_pbr": {
+        "high_valuation_count": 0,
+        "total_analyzed": 4,
+        "high_valuation_ratio": 0.0,
+        "warning_signal": false
+      },
+      "leverage_risk": {
+        "extreme_gain_count": 0,
+        "total_analyzed": 4,
+        "leverage_risk_ratio": 0.0,
+        "warning_signal": false
+      },
+      "market_heat": {
+        "avg_return_3m": 3.06,
+        "avg_return_6m": 8.26,
+        "overheated_3m": "False",
+        "overheated_6m": "False",
+        "warning_signal": "False"
+      }
+    },
+    "symbol_count": 4,
+    "caution_score": 0,
+    "high_caution": false
+  },
+  "comprehensive_report": {
+    "symbol": "005930.KS",
+    "report_date": "2025-06-02 17:03:44",
+    "leadership_analysis": {
+      "symbol": "005930.KS",
+      "analysis_date": "2025-06-02",
+      "criteria": {
+        "52w_high": {
+          "is_near_high": "False",
+          "current_price": 56800.0,
+          "52w_high": 87188.49,
+          "distance_from_high": -34.85
+        },
+        "market_performance": {
+          "beta": 1.09,
+          "relative_strength_3m": -1.72,
+          "relative_strength_6m": -5.18,
+          "outperforms_market": "False"
+        },
+        "moving_average": {
+          "above_20w_ma": "True",
+          "ma20_value": 55578.79,
+          "ma20_slope": 22.2892,
+          "ma20_trending_up": "True"
+        },
+        "macd": {
+          "error": "insufficient_data"
+        },
+        "volatility": {
+          "volatility_20d": 28.04,
+          "up_days_ratio": 0.5,
+          "avg_up_return": 1.33,
+          "avg_down_return": -1.19,
+          "strength_ratio": 1.12
+        }
+      },
+      "leadership_score": {
+        "score": 2,
+        "max_score": 6,
+        "percentage": 33.3,
+        "grade": "D"
+      }
+    },
+    "caution_analysis": {
+      "sector": null,
+      "analysis_date": "2025-06-02",
+      "caution_signals": {
+        "laggard_surge": {
+          "avg_laggard_return_6m": -3.31,
+          "laggard_count": 1,
+          "laggards_surge_50pct": "False",
+          "warning_signal": "False"
+        },
+        "high_pbr": {
+          "high_valuation_count": 0,
+          "total_analyzed": 3,
+          "high_valuation_ratio": 0.0,
+          "warning_signal": false
+        },
+        "leverage_risk": {
+          "extreme_gain_count": 0,
+          "total_analyzed": 3,
+          "leverage_risk_ratio": 0.0,
+          "warning_signal": false
+        },
+        "market_heat": {
+          "avg_return_3m": 0.13,
+          "avg_return_6m": 5.69,
+          "overheated_3m": "False",
+          "overheated_6m": "False",
+          "warning_signal": "False"
+        }
+      },
+      "symbol_count": 3,
+      "caution_score": 0,
+      "high_caution": false
+    },
+    "recommendation": {
+      "action": "매수 보류",
+      "reason": "주도주 특성 부족(점수: 2/6)",
+      "leadership_score": 2,
+      "caution_score": 0,
+      "confidence": 30
+    }
+  }
+}
