@@ -7,6 +7,7 @@ import json
 from datetime import datetime, timedelta
 import os
 from market_screener import MarketScreener
+import numpy as np
 
 # 페이지 설정
 st.set_page_config(
@@ -16,41 +17,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 메인 타이틀
-st.title("📈 CANSLIM 주도주 분석기")
-st.markdown("**William O'Neil의 CANSLIM 투자 기법 기반 정량적 주식 분석 도구**")
-
-# 사이드바 설정
-st.sidebar.header("🔧 분석 설정")
-
-# 벤치마크 선택
-benchmark_options = {
-    "코스피 (^KS11)": "^KS11",
-    "코스닥 (^KQ11)": "^KQ11", 
-    "S&P 500 (^GSPC)": "^GSPC",
-    "나스닥 (^IXIC)": "^IXIC"
-}
-
-selected_benchmark = st.sidebar.selectbox(
-    "벤치마크 지수 선택",
-    list(benchmark_options.keys()),
-    index=0
-)
-
-benchmark_symbol = benchmark_options[selected_benchmark]
-
 # 분석기 초기화
 @st.cache_resource
 def get_analyzer(benchmark):
     return CANSLIMAnalyzer(benchmark_symbol=benchmark)
 
-analyzer = get_analyzer(benchmark_symbol)
-
-# 탭 생성
-tab1, tab2, tab3, tab4 = st.tabs(["🎯 개별 주식 분석", "⚠️ 섹터 위험 분석", "📊 종합 리포트", "📚 사용 가이드"])
-
-# 탭 1: 개별 주식 분석
-with tab1:
+def show_stock_analysis():
+    """개별 주식 분석 페이지"""
     st.header("🎯 개별 주식 주도주 특성 분석")
     
     col1, col2 = st.columns([2, 1])
@@ -177,8 +150,350 @@ with tab1:
                         strength_color = "green" if volatility['strength_ratio'] >= 1.2 else "red"
                         st.markdown(f"<p style='color: {strength_color};'>강도 비율: {volatility['strength_ratio']:.1f}</p>", unsafe_allow_html=True)
 
-# 탭 2: 섹터 위험 분석
-with tab2:
+def show_market_screening():
+    """시장 스크리닝 페이지"""
+    st.header("🔍 CANSLIM 시장 스크리닝")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.markdown("""
+        ### 📊 전체 시장 스크리닝
+        코스피, 코스닥, 나스닥, S&P 500의 주식을 CANSLIM 기준으로 분석합니다.
+        
+        **📈 분석 대상:**
+        - **코스피**: 상위 150개 종목
+        - **코스닥**: 상위 150개 종목  
+        - **S&P 500**: 전체 503개 종목
+        - **나스닥**: 주요 200개 종목
+        
+        **🎯 분석 내용:**
+        - 각 종목을 7가지 CANSLIM 기준으로 평가
+        - 실시간 점수 계산 및 순위 매기기
+        - 상세한 분석 리포트 생성
+        
+        ⏱️ **예상 소요 시간: 약 15-20분**
+        """)
+        
+        st.info("💡 **참고**: 전체 1,000여개 종목을 분석하므로 시간이 소요됩니다. 분석 중에는 페이지를 새로고침하지 마세요.")
+    
+    with col2:
+        col2_1, col2_2 = st.columns(2)
+        with col2_1:
+            if st.button("🚀 스크리닝 실행", type="primary"):
+                run_market_screening()
+        with col2_2:
+            if st.button("🔄 결과 새로고침"):
+                st.experimental_rerun()
+    
+    # 최신 스크리닝 결과 표시
+    display_latest_screening_results()
+
+def run_market_screening():
+    """시장 스크리닝 실행"""
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    try:
+        status_text.text("🚀 스크리닝 초기화 중...")
+        screener = MarketScreener()
+        
+        progress_bar.progress(10)
+        status_text.text("📊 시장 데이터 수집 중...")
+        
+        # 스크리닝 실행
+        with st.spinner("전체 시장 분석 중... (약 15-20분 소요, 1,000여개 종목 분석)"):
+            results = screener.run_daily_screening()
+        
+        progress_bar.progress(100)
+        status_text.text("✅ 스크리닝 완료!")
+        
+        if results:
+            st.success(f"🎉 스크리닝 완료! {len(results)}개 종목 분석 성공")
+            
+            # 결과 미리보기
+            st.subheader("🏆 상위 10개 종목 미리보기")
+            preview_data = []
+            for i, result in enumerate(results[:10], 1):
+                preview_data.append({
+                    '순위': i,
+                    '종목': result.get('symbol', 'N/A'),
+                    '시장': result.get('market', 'N/A'),
+                    '점수': f"{result.get('overall_score', 0):.1f}점"
+                })
+            
+            preview_df = pd.DataFrame(preview_data)
+            st.dataframe(preview_df, use_container_width=True)
+            
+            st.info("💡 아래에서 전체 결과를 확인하세요!")
+        else:
+            st.warning("⚠️ 분석된 종목이 없습니다.")
+            
+    except Exception as e:
+        st.error(f"❌ 스크리닝 중 오류 발생: {str(e)}")
+        progress_bar.progress(0)
+        status_text.text("❌ 스크리닝 실패")
+
+def display_latest_screening_results():
+    """최신 스크리닝 결과 표시"""
+    st.subheader("📊 최신 스크리닝 결과")
+    
+    # 최신 결과 파일 찾기
+    result_files = [f for f in os.listdir('.') if f.startswith('screening_results_') and f.endswith('.json')]
+    
+    if not result_files:
+        st.info("📂 아직 스크리닝 결과가 없습니다. 위의 '스크리닝 실행' 버튼을 클릭해주세요.")
+        return
+    
+    # 가장 최신 파일 선택
+    latest_file = sorted(result_files, reverse=True)[0]
+    
+    try:
+        with open(latest_file, 'r', encoding='utf-8') as f:
+            results = json.load(f)
+        
+        if not results:
+            st.warning("⚠️ 스크리닝 결과가 비어있습니다.")
+            return
+        
+        # 기본 통계
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("📈 총 분석 종목", len(results))
+        
+        with col2:
+            avg_score = sum(r.get('overall_score', 0) for r in results) / len(results)
+            st.metric("📊 평균 점수", f"{avg_score:.1f}")
+        
+        with col3:
+            high_score_count = len([r for r in results if r.get('overall_score', 0) >= 70])
+            st.metric("🏆 고득점 종목 (70+)", high_score_count)
+        
+        with col4:
+            # 분석 날짜
+            analysis_date = results[0].get('analysis_date', 'Unknown')
+            st.metric("📅 분석 날짜", analysis_date)
+        
+        # 시장별 분포
+        st.subheader("🌍 시장별 분포")
+        markets = {}
+        for result in results:
+            market = result.get('market', 'Unknown')
+            if market not in markets:
+                markets[market] = []
+            markets[market].append(result)
+        
+        market_data = []
+        for market, market_results in markets.items():
+            avg_score = sum(r.get('overall_score', 0) for r in market_results) / len(market_results)
+            market_data.append({
+                'Market': market,
+                'Count': len(market_results),
+                'Avg_Score': round(avg_score, 1)
+            })
+        
+        market_df = pd.DataFrame(market_data)
+        
+        if not market_df.empty:
+            # 시장별 통계 테이블
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
+                st.dataframe(market_df, use_container_width=True)
+            
+            with col2:
+                # 시장별 분포 차트
+                fig = px.bar(market_df, x='Market', y='Count', 
+                           title='시장별 분석 종목 수',
+                           color='Avg_Score',
+                           color_continuous_scale='RdYlGn')
+                st.plotly_chart(fig, use_container_width=True)
+        
+        # 상위 종목 표시
+        st.subheader("🏆 상위 종목 랭킹")
+        
+        # 필터링 옵션
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            selected_markets = st.multiselect(
+                "🌍 시장 선택",
+                options=list(markets.keys()),
+                default=list(markets.keys())
+            )
+        
+        with col2:
+            min_score = st.slider("📊 최소 점수", 0.0, 100.0, 30.0, 5.0)
+        
+        with col3:
+            max_display = st.selectbox("📋 표시 개수", [20, 50, 100], index=1)
+        
+        # 필터 적용
+        filtered_results = [
+            r for r in results 
+            if r.get('market') in selected_markets and r.get('overall_score', 0) >= min_score
+        ]
+        
+        if filtered_results:
+            # 데이터프레임 생성
+            df_data = []
+            for i, result in enumerate(filtered_results[:max_display], 1):
+                canslim_scores = result.get('canslim_scores', {})
+                canslim_total = result.get('canslim_total', 0)
+                df_data.append({
+                    '순위': i,
+                    '종목': result.get('symbol', 'N/A'),
+                    '시장': result.get('market', 'N/A'),
+                    '총점(%)': f"{result.get('overall_score', 0):.1f}%",
+                    'CANSLIM': f"{canslim_total:.1f}/7",
+                    'C': round(canslim_scores.get('C', 0), 1),
+                    'A': round(canslim_scores.get('A', 0), 1),
+                    'N': round(canslim_scores.get('N', 0), 1),
+                    'S': round(canslim_scores.get('S', 0), 1),
+                    'L': round(canslim_scores.get('L', 0), 1),
+                    'I': round(canslim_scores.get('I', 0), 1),
+                    'M': round(canslim_scores.get('M', 0), 1)
+                })
+            
+            df = pd.DataFrame(df_data)
+            
+            # 색상 코딩을 위한 스타일링 (CANSLIM 개별 점수용)
+            def highlight_canslim_scores(val):
+                if isinstance(val, (int, float)):
+                    if val >= 0.8:  # 0.8점 이상 (거의 만점)
+                        return 'background-color: #d4edda; color: #155724'  # 진한 초록
+                    elif val >= 0.5:  # 0.5점 이상 (중간)
+                        return 'background-color: #fff3cd; color: #856404'  # 노랑
+                    elif val > 0:  # 0점 초과
+                        return 'background-color: #f8d7da; color: #721c24'  # 빨강
+                    else:  # 0점
+                        return 'background-color: #f1f3f4; color: #5f6368'  # 회색
+                return ''
+            
+            styled_df = df.style.applymap(highlight_canslim_scores, subset=['C', 'A', 'N', 'S', 'L', 'I', 'M'])
+            st.dataframe(styled_df, use_container_width=True, height=400)
+            
+            # CSV 다운로드 버튼
+            csv = df.to_csv(index=False, encoding='utf-8-sig')
+            st.download_button(
+                label="📥 CSV 다운로드",
+                data=csv,
+                file_name=f"canslim_screening_{analysis_date}.csv",
+                mime="text/csv"
+            )
+            
+            # 점수 설명
+            st.markdown("""
+            **📊 CANSLIM 점수 해석:**
+            - **총점(%)**: 7개 기준의 평균 달성도 (0-100%)
+            - **CANSLIM**: 실제 점수 (0-7점, 각 기준당 1점)
+            - **개별 기준**: 각각 1.0점 만점 (Pass/Fail 방식)
+            
+            **🎨 점수 색상 범례:**
+            - 🟢 0.8점 이상: 우수 (기준 달성)
+            - 🟡 0.5-0.7점: 보통 (부분 달성)  
+            - 🔴 0.1-0.4점: 미흡 (미달성)
+            - ⚪ 0점: 실패 (완전 미달성)
+            
+            **✨ William O'Neil의 CANSLIM 기준:**
+            - **C**: Current Quarterly Earnings (52주 신고가 근처)
+            - **A**: Annual Earnings Growth (시장 대비 우수성)
+            - **N**: New Products/Services (신제품/서비스)
+            - **S**: Supply and Demand (이동평균선 지지)
+            - **L**: Leader or Laggard (주도주 여부)
+            - **I**: Institutional Sponsorship (기관 후원)
+            - **M**: Market Direction (시장 방향성)
+            """)
+            
+        else:
+            st.warning("⚠️ 선택한 조건에 맞는 종목이 없습니다.")
+    
+    except Exception as e:
+        st.error(f"❌ 결과 로딩 중 오류 발생: {str(e)}")
+
+def show_screening_history():
+    """스크리닝 이력 페이지"""
+    st.header("📈 스크리닝 이력")
+    
+    # 모든 결과 파일 찾기
+    result_files = [f for f in os.listdir('.') if f.startswith('screening_results_') and f.endswith('.json')]
+    
+    if not result_files:
+        st.info("📂 스크리닝 이력이 없습니다.")
+        return
+    
+    # 파일별 요약 정보
+    history_data = []
+    for file in sorted(result_files, reverse=True):
+        try:
+            with open(file, 'r', encoding='utf-8') as f:
+                results = json.load(f)
+            
+            if results:
+                timestamp = file.replace('screening_results_', '').replace('.json', '')
+                date_str = f"{timestamp[:4]}-{timestamp[4:6]}-{timestamp[6:8]} {timestamp[9:11]}:{timestamp[11:13]}"
+                
+                avg_score = sum(r.get('overall_score', 0) for r in results) / len(results)
+                top_symbol = results[0].get('symbol', 'N/A') if results else 'N/A'
+                top_score = results[0].get('overall_score', 0) if results else 0
+                
+                history_data.append({
+                    '날짜': date_str,
+                    '분석 종목 수': len(results),
+                    '평균 점수': f"{avg_score:.1f}",
+                    '최고 종목': top_symbol,
+                    '최고 점수': f"{top_score:.1f}",
+                    '파일명': file
+                })
+        except:
+            continue
+    
+    if history_data:
+        df = pd.DataFrame(history_data)
+        
+        # 파일 선택
+        selected_file = st.selectbox(
+            "📊 분석 결과 선택",
+            options=df['파일명'].tolist(),
+            format_func=lambda x: df[df['파일명']==x]['날짜'].iloc[0]
+        )
+        
+        # 선택된 파일의 상세 정보 표시
+        if selected_file:
+            with open(selected_file, 'r', encoding='utf-8') as f:
+                results = json.load(f)
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("📈 분석 종목 수", len(results))
+            
+            with col2:
+                avg_score = sum(r.get('overall_score', 0) for r in results) / len(results)
+                st.metric("📊 평균 점수", f"{avg_score:.1f}")
+            
+            with col3:
+                high_score_count = len([r for r in results if r.get('overall_score', 0) >= 70])
+                st.metric("🏆 고득점 종목", high_score_count)
+            
+            # 상위 20개 종목 표시
+            st.subheader("🏆 상위 20개 종목")
+            if results:
+                top_20 = results[:20]
+                df_data = []
+                for i, result in enumerate(top_20, 1):
+                    df_data.append({
+                        '순위': i,
+                        '종목': result.get('symbol', 'N/A'),
+                        '시장': result.get('market', 'N/A'),
+                        '점수': round(result.get('overall_score', 0), 1)
+                    })
+                
+                st.dataframe(pd.DataFrame(df_data), use_container_width=True)
+
+def show_sector_risk_analysis():
+    """섹터 위험 분석 페이지"""
     st.header("⚠️ 섹터 투자 조심 기준 분석")
     
     # 섹터 종목 입력
@@ -300,8 +615,8 @@ with tab2:
                         else:
                             st.success("✅ 적정 수준")
 
-# 탭 3: 종합 리포트
-with tab3:
+def show_comprehensive_report():
+    """종합 리포트 페이지"""
     st.header("📊 종합 분석 리포트")
     
     col1, col2 = st.columns([2, 2])
@@ -386,8 +701,8 @@ with tab3:
             mime="application/json"
         )
 
-# 탭 4: 사용 가이드
-with tab4:
+def show_canslim_guide():
+    """CANSLIM 가이드 페이지"""
     st.header("📚 CANSLIM 주도주 점수 완벽 가이드")
     
     try:
@@ -429,6 +744,50 @@ with tab4:
         4. 점수가 높아도 **섹터 조심 신호** 반드시 확인하세요.
         """)
 
+# 메인 타이틀
+st.title("📈 CANSLIM 주도주 분석기")
+st.markdown("**William O'Neil의 CANSLIM 투자 기법 기반 정량적 주식 분석 도구**")
+
+# 사이드바 메뉴
+st.sidebar.header("📋 메뉴")
+
+menu = st.sidebar.selectbox(
+    "분석 메뉴 선택",
+    ["🎯 개별 주식 분석", "🔍 시장 스크리닝", "📊 스크리닝 이력", "⚠️ 섹터 위험 분석", "📋 종합 리포트", "📚 사용 가이드"]
+)
+
+# 벤치마크 선택
+benchmark_options = {
+    "코스피 (^KS11)": "^KS11",
+    "코스닥 (^KQ11)": "^KQ11", 
+    "S&P 500 (^GSPC)": "^GSPC",
+    "나스닥 (^IXIC)": "^IXIC"
+}
+
+selected_benchmark = st.sidebar.selectbox(
+    "벤치마크 지수 선택",
+    list(benchmark_options.keys()),
+    index=0
+)
+
+benchmark_symbol = benchmark_options[selected_benchmark]
+
+analyzer = get_analyzer(benchmark_symbol)
+
+# 메뉴별 페이지 표시
+if menu == "🎯 개별 주식 분석":
+    show_stock_analysis()
+elif menu == "🔍 시장 스크리닝":
+    show_market_screening()
+elif menu == "📊 스크리닝 이력":
+    show_screening_history()
+elif menu == "⚠️ 섹터 위험 분석":
+    show_sector_risk_analysis()
+elif menu == "📋 종합 리포트":
+    show_comprehensive_report()
+elif menu == "📚 사용 가이드":
+    show_canslim_guide()
+
 # 푸터
 st.markdown("---")
 st.markdown("""
@@ -436,305 +795,4 @@ st.markdown("""
 <p>📈 CANSLIM 주도주 분석기 | William O'Neil의 CANSLIM 투자 기법 기반</p>
 <p>⚠️ 본 분석 결과는 참고용이며, 투자 결정은 본인 책임하에 이루어져야 합니다.</p>
 </div>
-""", unsafe_allow_html=True)
-
-def show_market_screening():
-    """시장 스크리닝 페이지"""
-    st.title("🔍 CANSLIM 시장 스크리닝")
-    
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.markdown("""
-        ### 전체 시장 스크리닝
-        코스피, 코스닥, 나스닥, S&P 500의 모든 주식을 CANSLIM 기준으로 분석합니다.
-        """)
-    
-    with col2:
-        if st.button("🚀 스크리닝 실행", type="primary"):
-            run_market_screening()
-    
-    # 최신 스크리닝 결과 표시
-    display_latest_screening_results()
-
-def run_market_screening():
-    """시장 스크리닝 실행"""
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    try:
-        status_text.text("스크리닝 초기화 중...")
-        screener = MarketScreener()
-        
-        progress_bar.progress(10)
-        status_text.text("시장 데이터 수집 중...")
-        
-        # 스크리닝 실행
-        with st.spinner("전체 시장 분석 중... (수 분 소요될 수 있습니다)"):
-            results = screener.run_daily_screening()
-        
-        progress_bar.progress(100)
-        status_text.text("스크리닝 완료!")
-        
-        if results:
-            st.success(f"✅ 스크리닝 완료! {len(results)}개 종목 분석")
-            
-            # 결과 미리보기
-            st.subheader("상위 10개 종목")
-            preview_df = pd.DataFrame(results[:10])
-            if not preview_df.empty:
-                display_columns = ['symbol', 'market', 'overall_score']
-                if all(col in preview_df.columns for col in display_columns):
-                    st.dataframe(preview_df[display_columns])
-        else:
-            st.warning("분석된 종목이 없습니다.")
-            
-    except Exception as e:
-        st.error(f"스크리닝 중 오류 발생: {str(e)}")
-        progress_bar.progress(0)
-        status_text.text("스크리닝 실패")
-
-def display_latest_screening_results():
-    """최신 스크리닝 결과 표시"""
-    st.subheader("📊 최신 스크리닝 결과")
-    
-    # 최신 결과 파일 찾기
-    result_files = [f for f in os.listdir('.') if f.startswith('screening_results_') and f.endswith('.json')]
-    
-    if not result_files:
-        st.info("아직 스크리닝 결과가 없습니다. 위의 '스크리닝 실행' 버튼을 클릭해주세요.")
-        return
-    
-    # 가장 최신 파일 선택
-    latest_file = sorted(result_files, reverse=True)[0]
-    
-    try:
-        with open(latest_file, 'r', encoding='utf-8') as f:
-            results = json.load(f)
-        
-        if not results:
-            st.warning("스크리닝 결과가 비어있습니다.")
-            return
-        
-        # 기본 통계
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("총 분석 종목", len(results))
-        
-        with col2:
-            avg_score = sum(r.get('overall_score', 0) for r in results) / len(results)
-            st.metric("평균 점수", f"{avg_score:.1f}")
-        
-        with col3:
-            high_score_count = len([r for r in results if r.get('overall_score', 0) >= 70])
-            st.metric("고득점 종목 (70+)", high_score_count)
-        
-        with col4:
-            # 분석 날짜
-            analysis_date = results[0].get('analysis_date', 'Unknown')
-            st.metric("분석 날짜", analysis_date)
-        
-        # 시장별 분포
-        st.subheader("시장별 분포")
-        markets = {}
-        for result in results:
-            market = result.get('market', 'Unknown')
-            if market not in markets:
-                markets[market] = []
-            markets[market].append(result)
-        
-        market_data = []
-        for market, market_results in markets.items():
-            avg_score = sum(r.get('overall_score', 0) for r in market_results) / len(market_results)
-            market_data.append({
-                'Market': market,
-                'Count': len(market_results),
-                'Avg_Score': avg_score
-            })
-        
-        market_df = pd.DataFrame(market_data)
-        
-        if not market_df.empty:
-            fig = px.bar(market_df, x='Market', y='Count', 
-                        title='시장별 분석 종목 수')
-            st.plotly_chart(fig, use_container_width=True)
-        
-        # 상위 종목 표시
-        st.subheader("🏆 상위 50개 종목")
-        
-        # 필터링 옵션
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            selected_markets = st.multiselect(
-                "시장 선택",
-                options=list(markets.keys()),
-                default=list(markets.keys())
-            )
-        
-        with col2:
-            min_score = st.slider("최소 점수", 0, 100, 50)
-        
-        # 필터 적용
-        filtered_results = [
-            r for r in results 
-            if r.get('market') in selected_markets and r.get('overall_score', 0) >= min_score
-        ]
-        
-        if filtered_results:
-            # 데이터프레임 생성
-            df_data = []
-            for i, result in enumerate(filtered_results[:50], 1):
-                canslim_scores = result.get('canslim_scores', {})
-                df_data.append({
-                    '순위': i,
-                    '종목': result.get('symbol', 'N/A'),
-                    '시장': result.get('market', 'N/A'),
-                    '총점': result.get('overall_score', 0),
-                    'C': canslim_scores.get('C', 0),
-                    'A': canslim_scores.get('A', 0),
-                    'N': canslim_scores.get('N', 0),
-                    'S': canslim_scores.get('S', 0),
-                    'L': canslim_scores.get('L', 0),
-                    'I': canslim_scores.get('I', 0),
-                    'M': canslim_scores.get('M', 0)
-                })
-            
-            df = pd.DataFrame(df_data)
-            
-            # 색상 코딩을 위한 스타일링
-            def color_score(val):
-                if val >= 80:
-                    return 'background-color: #d4edda'  # 초록
-                elif val >= 60:
-                    return 'background-color: #fff3cd'  # 노랑
-                elif val >= 40:
-                    return 'background-color: #f8d7da'  # 빨강
-                else:
-                    return ''
-            
-            styled_df = df.style.applymap(color_score, subset=['총점', 'C', 'A', 'N', 'S', 'L', 'I', 'M'])
-            st.dataframe(styled_df, use_container_width=True, height=600)
-            
-            # CSV 다운로드 버튼
-            csv = df.to_csv(index=False, encoding='utf-8-sig')
-            st.download_button(
-                label="📥 CSV 다운로드",
-                data=csv,
-                file_name=f"canslim_screening_{analysis_date}.csv",
-                mime="text/csv"
-            )
-            
-        else:
-            st.warning("선택한 조건에 맞는 종목이 없습니다.")
-    
-    except Exception as e:
-        st.error(f"결과 로딩 중 오류 발생: {str(e)}")
-
-def show_screening_history():
-    """스크리닝 이력 페이지"""
-    st.title("📈 스크리닝 이력")
-    
-    # 모든 결과 파일 찾기
-    result_files = [f for f in os.listdir('.') if f.startswith('screening_results_') and f.endswith('.json')]
-    
-    if not result_files:
-        st.info("스크리닝 이력이 없습니다.")
-        return
-    
-    # 파일별 요약 정보
-    history_data = []
-    for file in sorted(result_files, reverse=True):
-        try:
-            with open(file, 'r', encoding='utf-8') as f:
-                results = json.load(f)
-            
-            if results:
-                timestamp = file.replace('screening_results_', '').replace('.json', '')
-                date_str = f"{timestamp[:4]}-{timestamp[4:6]}-{timestamp[6:8]} {timestamp[9:11]}:{timestamp[11:13]}"
-                
-                avg_score = sum(r.get('overall_score', 0) for r in results) / len(results)
-                top_symbol = results[0].get('symbol', 'N/A') if results else 'N/A'
-                top_score = results[0].get('overall_score', 0) if results else 0
-                
-                history_data.append({
-                    '날짜': date_str,
-                    '분석 종목 수': len(results),
-                    '평균 점수': f"{avg_score:.1f}",
-                    '최고 종목': top_symbol,
-                    '최고 점수': f"{top_score:.1f}",
-                    '파일명': file
-                })
-        except:
-            continue
-    
-    if history_data:
-        df = pd.DataFrame(history_data)
-        
-        # 파일 선택
-        selected_file = st.selectbox(
-            "분석 결과 선택",
-            options=df['파일명'].tolist(),
-            format_func=lambda x: df[df['파일명']==x]['날짜'].iloc[0]
-        )
-        
-        # 선택된 파일의 상세 정보 표시
-        if selected_file:
-            with open(selected_file, 'r', encoding='utf-8') as f:
-                results = json.load(f)
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric("분석 종목 수", len(results))
-            
-            with col2:
-                avg_score = sum(r.get('overall_score', 0) for r in results) / len(results)
-                st.metric("평균 점수", f"{avg_score:.1f}")
-            
-            with col3:
-                high_score_count = len([r for r in results if r.get('overall_score', 0) >= 70])
-                st.metric("고득점 종목", high_score_count)
-            
-            # 상위 20개 종목 표시
-            st.subheader("상위 20개 종목")
-            if results:
-                top_20 = results[:20]
-                df_data = []
-                for i, result in enumerate(top_20, 1):
-                    df_data.append({
-                        '순위': i,
-                        '종목': result.get('symbol', 'N/A'),
-                        '시장': result.get('market', 'N/A'),
-                        '점수': result.get('overall_score', 0)
-                    })
-                
-                st.dataframe(pd.DataFrame(df_data), use_container_width=True)
-
-# 메인 앱 수정
-def main():
-    st.set_page_config(
-        page_title="CANSLIM Stock Analyzer", 
-        page_icon="📈", 
-        layout="wide"
-    )
-    
-    # 사이드바 메뉴
-    st.sidebar.title("📈 CANSLIM 분석 도구")
-    
-    menu = st.sidebar.selectbox(
-        "메뉴 선택",
-        ["개별 주식 분석", "시장 스크리닝", "스크리닝 이력", "CANSLIM 가이드"]
-    )
-    
-    if menu == "개별 주식 분석":
-        show_stock_analysis()
-    elif menu == "시장 스크리닝":
-        show_market_screening()
-    elif menu == "스크리닝 이력":
-        show_screening_history()
-    elif menu == "CANSLIM 가이드":
-        show_canslim_guide()
-
-# ... rest of existing code ... 
+""", unsafe_allow_html=True) 

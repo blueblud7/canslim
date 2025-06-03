@@ -23,6 +23,112 @@ class MarketScreener:
     def __init__(self):
         self.analyzer = CANSLIMAnalyzer()
         self.results = []
+    
+    def analyze_stock(self, symbol):
+        """
+        개별 주식의 CANSLIM 분석 및 스코어 계산
+        """
+        try:
+            # 주도주 기준 분석
+            leadership_result = self.analyzer.analyze_leadership_criteria(symbol)
+            
+            if "error" in leadership_result:
+                return None
+            
+            # CANSLIM 개별 점수 계산
+            criteria = leadership_result.get("criteria", {})
+            canslim_scores = self._calculate_canslim_scores(criteria)
+            
+            # 전체 점수 계산: 7개 기준의 합계 (0-7점)
+            total_canslim_score = sum(canslim_scores.values())
+            # 백분율로 변환 (0-100%)
+            overall_score = (total_canslim_score / 7.0) * 100
+            
+            result = {
+                "symbol": symbol,
+                "overall_score": round(overall_score, 1),
+                "canslim_total": round(total_canslim_score, 1),  # 실제 CANSLIM 점수 (0-7)
+                "canslim_scores": canslim_scores,
+                "analysis_date": datetime.now().strftime('%Y-%m-%d'),
+                "leadership_data": leadership_result
+            }
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"{symbol} 분석 실패: {str(e)}")
+            return None
+    
+    def _calculate_canslim_scores(self, criteria):
+        """
+        CANSLIM 개별 기준별 점수 계산 (각 1점 만점, 총 7점)
+        William O'Neil의 원래 CANSLIM 방식: Pass(1점) or Fail(0점)
+        """
+        scores = {}
+        
+        # C - Current Quarterly Earnings (52주 신고가로 대체)
+        if "52w_high" in criteria:
+            high_data = criteria["52w_high"]
+            # 신고가 95% 이상이면 1점, 아니면 0점
+            scores["C"] = 1.0 if high_data.get("is_near_high", False) else 0.0
+        else:
+            scores["C"] = 0.0
+        
+        # A - Annual Earnings Growth (시장 대비 성과로 대체)
+        if "market_performance" in criteria:
+            market_perf = criteria["market_performance"]
+            rel_strength_6m = market_perf.get("relative_strength_6m", -100)
+            # 6개월 상대강도가 양수이면 1점 (시장 대비 우수)
+            scores["A"] = 1.0 if rel_strength_6m > 0 else 0.0
+        else:
+            scores["A"] = 0.0
+        
+        # N - New Products/Services (거래량 분석으로 대체)
+        # 현재는 데이터 부족으로 중간값 할당
+        # TODO: 실제로는 거래량 급증, 신제품 출시 등을 확인해야 함
+        scores["N"] = 0.5  # 중립
+        
+        # S - Supply and Demand (이동평균선 지지)
+        if "moving_average" in criteria:
+            ma_data = criteria["moving_average"]
+            # 20주 이평선 위에서 거래하고 이평선이 상승 추세이면 1점
+            above_ma = ma_data.get("above_20w_ma", False)
+            ma_rising = ma_data.get("ma20_trending_up", False)
+            scores["S"] = 1.0 if (above_ma and ma_rising) else 0.0
+        else:
+            scores["S"] = 0.0
+        
+        # L - Leader or Laggard (베타값으로 판단)
+        if "market_performance" in criteria:
+            market_perf = criteria["market_performance"]
+            rel_strength_6m = market_perf.get("relative_strength_6m", -100)
+            # 상대강도가 20% 이상이면 확실한 주도주로 판단
+            scores["L"] = 1.0 if rel_strength_6m > 20 else 0.0
+        else:
+            scores["L"] = 0.0
+        
+        # I - Institutional Sponsorship (거래량 강도로 대체)
+        if "volatility" in criteria:
+            vol_data = criteria["volatility"]
+            if "strength_ratio" in vol_data:
+                strength = vol_data["strength_ratio"]
+                # 상승 강도가 하락 강도보다 1.2배 이상이면 1점
+                scores["I"] = 1.0 if strength >= 1.2 else 0.0
+            else:
+                scores["I"] = 0.0
+        else:
+            scores["I"] = 0.0
+        
+        # M - Market Direction (MACD)
+        if "macd" in criteria:
+            macd_data = criteria["macd"]
+            # 매도 신호가 없으면 1점
+            no_sell_signal = not macd_data.get("sell_preparation_needed", True)
+            scores["M"] = 1.0 if (not macd_data.get("error") and no_sell_signal) else 0.0
+        else:
+            scores["M"] = 0.0
+        
+        return scores
         
     def get_kospi_stocks(self):
         """코스피 주식 리스트 가져오기"""
@@ -49,7 +155,7 @@ class MarketScreener:
                     symbols.append(symbol)
                 
                 logger.info(f"코스피 주식 {len(symbols)}개 수집 완료")
-                return symbols[:100]  # 테스트용으로 100개만
+                return symbols[:150]  # 상위 150개 분석
             
         except Exception as e:
             logger.error(f"코스피 주식 리스트 가져오기 실패: {e}")
@@ -81,7 +187,7 @@ class MarketScreener:
                     symbols.append(symbol)
                 
                 logger.info(f"코스닥 주식 {len(symbols)}개 수집 완료")
-                return symbols[:50]  # 테스트용으로 50개만
+                return symbols[:150]  # 상위 150개 분석
             
         except Exception as e:
             logger.error(f"코스닥 주식 리스트 가져오기 실패: {e}")
@@ -100,7 +206,7 @@ class MarketScreener:
             symbols = sp500_table['Symbol'].tolist()
             
             logger.info(f"S&P 500 주식 {len(symbols)}개 수집 완료")
-            return symbols[:100]  # 테스트용으로 100개만
+            return symbols  # 전체 503개 분석
             
         except Exception as e:
             logger.error(f"S&P 500 주식 리스트 가져오기 실패: {e}")
@@ -108,18 +214,58 @@ class MarketScreener:
             return [
                 "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA", "BRK-B",
                 "UNH", "JNJ", "V", "PG", "JPM", "HD", "CVX", "MA", "PFE", "ABBV",
-                "BAC", "KO", "PEP", "AVGO", "TMO", "COST", "WMT", "DIS", "ABT"
+                "BAC", "KO"
             ]
     
     def get_nasdaq_stocks(self):
-        """나스닥 주요 주식 리스트"""
-        # NASDAQ-100 주요 종목들
-        return [
-            "AAPL", "MSFT", "AMZN", "TSLA", "GOOGL", "GOOG", "META", "NVDA",
-            "NFLX", "ADBE", "PYPL", "INTC", "CMCSA", "PEP", "COST", "TMUS",
-            "AVGO", "TXN", "QCOM", "CHTR", "SBUX", "INTU", "ISRG", "BKNG",
-            "AMD", "GILD", "MU", "FISV", "CSX", "REGN", "ATVI", "MDLZ"
-        ]
+        """나스닥 주요 주식 리스트 가져오기 (약 200개)"""
+        try:
+            # NASDAQ-100과 추가 주요 종목들을 결합
+            nasdaq_stocks = []
+            
+            # NASDAQ-100 주요 종목들
+            nasdaq_100 = [
+                "AAPL", "MSFT", "AMZN", "TSLA", "GOOGL", "GOOG", "META", "NVDA", 
+                "NFLX", "ADBE", "PYPL", "INTC", "CMCSA", "PEP", "COST", "TMUS",
+                "AVGO", "TXN", "QCOM", "CHTR", "SBUX", "GILD", "MDLZ", "FISV",
+                "BKNG", "INTU", "ISRG", "ADP", "VRTX", "CSX", "ATVI", "REGN",
+                "AMD", "MU", "AMAT", "LRCX", "ADI", "KLAC", "MRVL", "ORLY",
+                "CDNS", "SNPS", "CTAS", "WDAY", "IDXX", "NXPI", "LULU", "EXC",
+                "DXCM", "TEAM", "ZS", "CRWD", "MRNA", "BIIB", "SIRI", "ILMN",
+                "MELI", "ROST", "KDP", "CEG", "FAST", "VRSK", "AEP", "PAYX",
+                "CPRT", "PCAR", "ODFL", "CSGP", "MNST", "XEL", "DLTR", "ANSS",
+                "TTD", "FANG", "WBD", "SGEN", "ALGN", "CTSH", "FTNT", "VRSN"
+            ]
+            
+            nasdaq_stocks.extend(nasdaq_100)
+            
+            # 추가 나스닥 종목들 (성장주 및 기술주 중심)
+            additional_nasdaq = [
+                "ABNB", "ADSK", "ASML", "DOCU", "EBAY", "HOOD", "LYFT", "NTES",
+                "OKTA", "ROKU", "SHOP", "SPLK", "SPOT", "SQ", "UBER", "ZM",
+                "COIN", "DOCN", "DDOG", "NET", "SNOW", "TWLO", "PLTR", "RBLX",
+                "SE", "GRAB", "BABA", "JD", "PDD", "BILI", "TCOM", "NTES",
+                "WIX", "FVRR", "UPWK", "ETSY", "PINS", "SNAP", "TWTR", "DBX",
+                "BOX", "ZEN", "NOW", "CRM", "ORCL", "SAP", "VMW", "RHT",
+                "PANW", "CYBR", "OKTA", "ZS", "CRWD", "S", "VEEV", "WDAY",
+                "NTNX", "TWLO", "MDB", "DDOG", "NET", "FSLY", "ESTC", "DOCU"
+            ]
+            
+            nasdaq_stocks.extend(additional_nasdaq)
+            
+            # 중복 제거 및 최대 200개로 제한
+            nasdaq_stocks = list(set(nasdaq_stocks))[:200]
+            
+            logger.info(f"나스닥 주식 {len(nasdaq_stocks)}개 수집 완료")
+            return nasdaq_stocks
+            
+        except Exception as e:
+            logger.error(f"나스닥 주식 리스트 생성 실패: {e}")
+            # 기본 NASDAQ-100 반환
+            return [
+                "AAPL", "MSFT", "AMZN", "TSLA", "GOOGL", "GOOG", "META", "NVDA",
+                "NFLX", "ADBE", "PYPL", "INTC", "CMCSA", "PEP", "COST", "TMUS"
+            ]
     
     def analyze_stock_batch(self, symbols, market_name):
         """주식 배치 분석"""
@@ -130,24 +276,22 @@ class MarketScreener:
         
         for i, symbol in enumerate(symbols):
             try:
-                if i % 20 == 0:
+                if i % 10 == 0:
                     logger.info(f"{market_name} 진행률: {i}/{len(symbols)} ({i/len(symbols)*100:.1f}%)")
                 
                 # 분석 실행
-                result = self.analyzer.analyze_stock(symbol)
+                result = self.analyze_stock(symbol)
                 
-                if result and result.get('overall_score', 0) > 0:
+                if result and result.get('overall_score', 0) > 30:  # 최소 점수 기준
                     result['market'] = market_name
-                    result['symbol'] = symbol
-                    result['analysis_date'] = datetime.now().strftime('%Y-%m-%d')
                     results.append(result)
                 
                 # API 요청 제한을 위한 딜레이
-                time.sleep(0.1)
+                time.sleep(0.2)
                 
             except Exception as e:
                 failed_count += 1
-                if failed_count % 10 == 0:
+                if failed_count % 5 == 0:
                     logger.warning(f"{market_name} {symbol} 분석 실패 (총 {failed_count}개 실패): {str(e)[:100]}")
                 continue
         
@@ -161,7 +305,7 @@ class MarketScreener:
         
         all_results = []
         
-        # 각 시장별 분석
+        # 각 시장별 분석 (테스트용으로 작은 수로 시작)
         markets = {
             "KOSPI": self.get_kospi_stocks(),
             "KOSDAQ": self.get_kosdaq_stocks(),
@@ -195,7 +339,10 @@ class MarketScreener:
         # JSON 파일로 전체 결과 저장
         filename = f"screening_results_{timestamp}.json"
         with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
+            json.dump(results, f, ensure_ascii=False, indent=2, default=str)
+        
+        # CSV 파일 초기화
+        csv_filename = None
         
         # 상위 50개 종목을 CSV로 저장
         if results:
@@ -206,7 +353,10 @@ class MarketScreener:
             # 간단한 요약 리포트 생성
             self.generate_summary_report(results, timestamp)
         
-        logger.info(f"결과 저장 완료: {filename}, {csv_filename}")
+        if csv_filename:
+            logger.info(f"결과 저장 완료: {filename}, {csv_filename}")
+        else:
+            logger.info(f"결과 저장 완료: {filename}")
     
     def generate_summary_report(self, results, timestamp):
         """요약 리포트 생성"""
@@ -250,10 +400,10 @@ class MarketScreener:
             n = canslim_scores.get('N', 0)
             s = canslim_scores.get('S', 0)
             l = canslim_scores.get('L', 0)
-            i = canslim_scores.get('I', 0)
+            inst = canslim_scores.get('I', 0)
             m = canslim_scores.get('M', 0)
             
-            report.append(f"| {i} | {symbol} | {market} | {score:.1f} | {c:.1f} | {a:.1f} | {n:.1f} | {s:.1f} | {l:.1f} | {i:.1f} | {m:.1f} |")
+            report.append(f"| {i} | {symbol} | {market} | {score:.1f} | {c:.0f} | {a:.0f} | {n:.0f} | {s:.0f} | {l:.0f} | {inst:.0f} | {m:.0f} |")
         
         # 리포트 저장
         report_filename = f"screening_report_{timestamp}.md"
