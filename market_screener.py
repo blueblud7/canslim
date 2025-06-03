@@ -14,6 +14,8 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 from canslim_analyzer import CANSLIMAnalyzer
+import os
+import pytz
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -267,150 +269,192 @@ class MarketScreener:
                 "NFLX", "ADBE", "PYPL", "INTC", "CMCSA", "PEP", "COST", "TMUS"
             ]
     
-    def analyze_stock_batch(self, symbols, market_name):
-        """주식 배치 분석"""
+    def analyze_stock_batch(self, symbols, market_name, max_workers=10):
+        """주식 배치 분석 (병렬 처리)"""
         results = []
         failed_count = 0
         
-        logger.info(f"{market_name} 시장 {len(symbols)}개 주식 분석 시작")
+        logger.info(f"{market_name} 시장 {len(symbols)}개 주식 병렬 분석 시작 (워커: {max_workers}개)")
         
-        for i, symbol in enumerate(symbols):
+        def analyze_single_stock(symbol):
+            """단일 주식 분석 함수"""
             try:
-                if i % 10 == 0:
-                    logger.info(f"{market_name} 진행률: {i}/{len(symbols)} ({i/len(symbols)*100:.1f}%)")
-                
-                # 분석 실행
                 result = self.analyze_stock(symbol)
-                
                 if result and result.get('overall_score', 0) > 30:  # 최소 점수 기준
                     result['market'] = market_name
-                    results.append(result)
-                
-                # API 요청 제한을 위한 딜레이
-                time.sleep(0.2)
-                
+                    return result
+                return None
             except Exception as e:
-                failed_count += 1
-                if failed_count % 5 == 0:
-                    logger.warning(f"{market_name} {symbol} 분석 실패 (총 {failed_count}개 실패): {str(e)[:100]}")
-                continue
+                logger.warning(f"{market_name} {symbol} 분석 실패: {str(e)[:100]}")
+                return None
         
-        logger.info(f"{market_name} 분석 완료: 성공 {len(results)}개, 실패 {failed_count}개")
+        # 병렬 처리 실행
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # 모든 심볼에 대해 Future 객체 생성
+            future_to_symbol = {executor.submit(analyze_single_stock, symbol): symbol for symbol in symbols}
+            
+            # 완료된 작업들을 처리
+            completed = 0
+            for future in as_completed(future_to_symbol):
+                symbol = future_to_symbol[future]
+                completed += 1
+                
+                try:
+                    result = future.result()
+                    if result:
+                        results.append(result)
+                except Exception as e:
+                    failed_count += 1
+                    if failed_count % 5 == 0:
+                        logger.warning(f"{market_name} {symbol} 분석 실패 (총 {failed_count}개 실패): {str(e)[:100]}")
+                
+                # 진행 상황 로깅 (10개마다)
+                if completed % 10 == 0:
+                    logger.info(f"{market_name} 진행률: {completed}/{len(symbols)} ({completed/len(symbols)*100:.1f}%)")
+        
+        logger.info(f"{market_name} 병렬 분석 완료: 성공 {len(results)}개, 실패 {failed_count}개")
         return results
     
-    def run_daily_screening(self):
-        """매일 전체 시장 스크리닝 실행"""
-        logger.info("=== CANSLIM 시장 스크리닝 시작 ===")
+    def get_market_schedule(self):
+        """캘리포니아 시간 기준 시장별 스케줄"""
+        ca_tz = pytz.timezone('America/Los_Angeles')
+        current_time = datetime.now(ca_tz)
+        
+        schedule = {
+            "korean_markets": {
+                "name": "한국 시장 (코스피/코스닥)",
+                "open_time": "16:00",  # 전날 16:00 (한국 09:00)
+                "close_time": "22:30", # 전날 22:30 (한국 15:30)
+                "markets": ["KOSPI", "KOSDAQ"]
+            },
+            "us_markets": {
+                "name": "미국 시장 (NASDAQ/S&P500)",
+                "open_time": "06:30",  # 당일 06:30 (동부 09:30)
+                "close_time": "13:00", # 당일 13:00 (동부 16:00)
+                "markets": ["NASDAQ", "SP500"]
+            }
+        }
+        
+        return schedule, current_time
+    
+    def should_run_korean_screening(self):
+        """한국 시장 스크리닝 실행 시점인지 확인"""
+        schedule, current_time = self.get_market_schedule()
+        
+        # 한국 시장: 장 시작 30분 전 (15:30) 또는 장 마감 후 (22:40)
+        hour = current_time.hour
+        minute = current_time.minute
+        
+        # 15:30 (장 시작 30분 전) 또는 22:40 (장 마감 10분 후)
+        return (hour == 15 and minute >= 30) or (hour == 22 and minute >= 40)
+    
+    def should_run_us_screening(self):
+        """미국 시장 스크리닝 실행 시점인지 확인"""
+        schedule, current_time = self.get_market_schedule()
+        
+        # 미국 시장: 장 시작 30분 전 (06:00) 또는 장 마감 후 (13:10)
+        hour = current_time.hour
+        minute = current_time.minute
+        
+        # 06:00 (장 시작 30분 전) 또는 13:10 (장 마감 10분 후)
+        return (hour == 6 and minute >= 0) or (hour == 13 and minute >= 10)
+    
+    def run_market_specific_screening(self, markets_to_screen):
+        """특정 시장만 스크리닝 실행"""
+        logger.info(f"=== {', '.join(markets_to_screen)} 시장 스크리닝 시작 ===")
         start_time = datetime.now()
         
         all_results = []
         
-        # 각 시장별 분석 (테스트용으로 작은 수로 시작)
-        markets = {
-            "KOSPI": self.get_kospi_stocks(),
-            "KOSDAQ": self.get_kosdaq_stocks(),
-            "NASDAQ": self.get_nasdaq_stocks(),
-            "SP500": self.get_sp500_stocks()
+        # 시장별 분석
+        market_functions = {
+            "KOSPI": self.get_kospi_stocks,
+            "KOSDAQ": self.get_kosdaq_stocks,
+            "NASDAQ": self.get_nasdaq_stocks,
+            "SP500": self.get_sp500_stocks
         }
         
-        for market_name, symbols in markets.items():
-            market_results = self.analyze_stock_batch(symbols, market_name)
-            all_results.extend(market_results)
+        for market_name in markets_to_screen:
+            if market_name in market_functions:
+                symbols = market_functions[market_name]()
+                market_results = self.analyze_stock_batch(symbols, market_name, max_workers=15)
+                all_results.extend(market_results)
         
         # 결과 정렬 (전체 점수 기준)
         all_results.sort(key=lambda x: x.get('overall_score', 0), reverse=True)
         
         # 결과 저장
-        self.save_screening_results(all_results)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"screening_{'+'.join(markets_to_screen)}_{timestamp}.json"
+        
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(all_results, f, ensure_ascii=False, indent=2, default=str)
         
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds() / 60
         
-        logger.info(f"=== 스크리닝 완료 ===")
+        logger.info(f"=== {', '.join(markets_to_screen)} 스크리닝 완료 ===")
         logger.info(f"총 분석 종목: {len(all_results)}개")
         logger.info(f"소요 시간: {duration:.1f}분")
         
-        return all_results
+        return all_results, filename
     
-    def save_screening_results(self, results):
-        """스크리닝 결과 저장"""
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    def detect_changes(self, new_results, previous_file=None):
+        """이전 결과와 비교하여 변동사항 감지"""
+        if not previous_file or not os.path.exists(previous_file):
+            return {
+                "new_entries": new_results[:10] if new_results else [],
+                "score_changes": [],
+                "dropped_out": []
+            }
         
-        # JSON 파일로 전체 결과 저장
-        filename = f"screening_results_{timestamp}.json"
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(results, f, ensure_ascii=False, indent=2, default=str)
+        try:
+            with open(previous_file, 'r', encoding='utf-8') as f:
+                previous_results = json.load(f)
+        except:
+            return {"new_entries": [], "score_changes": [], "dropped_out": []}
         
-        # CSV 파일 초기화
-        csv_filename = None
+        # 이전 결과를 딕셔너리로 변환
+        prev_dict = {r.get('symbol'): r for r in previous_results}
+        new_dict = {r.get('symbol'): r for r in new_results}
         
-        # 상위 50개 종목을 CSV로 저장
-        if results:
-            df = pd.DataFrame(results[:50])
-            csv_filename = f"top_stocks_{timestamp}.csv"
-            df.to_csv(csv_filename, index=False, encoding='utf-8-sig')
-            
-            # 간단한 요약 리포트 생성
-            self.generate_summary_report(results, timestamp)
+        changes = {
+            "new_entries": [],      # 새로 진입한 종목들
+            "score_changes": [],    # 점수 변동이 큰 종목들
+            "dropped_out": []       # 탈락한 종목들
+        }
         
-        if csv_filename:
-            logger.info(f"결과 저장 완료: {filename}, {csv_filename}")
-        else:
-            logger.info(f"결과 저장 완료: {filename}")
+        # 새로 진입한 종목들
+        for symbol in new_dict:
+            if symbol not in prev_dict:
+                changes["new_entries"].append(new_dict[symbol])
+        
+        # 점수 변동이 큰 종목들 (10점 이상 변동)
+        for symbol in new_dict:
+            if symbol in prev_dict:
+                old_score = prev_dict[symbol].get('overall_score', 0)
+                new_score = new_dict[symbol].get('overall_score', 0)
+                score_diff = new_score - old_score
+                
+                if abs(score_diff) >= 10:  # 10점 이상 변동
+                    changes["score_changes"].append({
+                        'symbol': symbol,
+                        'old_score': old_score,
+                        'new_score': new_score,
+                        'change': score_diff,
+                        'market': new_dict[symbol].get('market')
+                    })
+        
+        # 탈락한 종목들 (이전에 있었지만 이번에 없는 것들)
+        for symbol in prev_dict:
+            if symbol not in new_dict:
+                changes["dropped_out"].append(prev_dict[symbol])
+        
+        return changes
     
-    def generate_summary_report(self, results, timestamp):
-        """요약 리포트 생성"""
-        if not results:
-            return
-        
-        report = []
-        report.append("# CANSLIM 일일 스크리닝 리포트")
-        report.append(f"날짜: {datetime.now().strftime('%Y년 %m월 %d일')}")
-        report.append(f"분석 종목 수: {len(results)}개")
-        report.append("")
-        
-        # 시장별 통계
-        markets = {}
-        for result in results:
-            market = result.get('market', 'Unknown')
-            if market not in markets:
-                markets[market] = []
-            markets[market].append(result)
-        
-        report.append("## 시장별 분석 결과")
-        for market, market_results in markets.items():
-            avg_score = np.mean([r.get('overall_score', 0) for r in market_results])
-            report.append(f"- {market}: {len(market_results)}개 종목, 평균 점수: {avg_score:.1f}")
-        report.append("")
-        
-        # 상위 20개 종목
-        report.append("## 상위 20개 종목")
-        report.append("| 순위 | 종목 | 시장 | 점수 | C | A | N | S | L | I | M |")
-        report.append("|------|------|------|------|---|---|---|---|---|---|---|")
-        
-        for i, result in enumerate(results[:20], 1):
-            symbol = result.get('symbol', 'N/A')
-            market = result.get('market', 'N/A')
-            score = result.get('overall_score', 0)
-            
-            # CANSLIM 개별 점수
-            canslim_scores = result.get('canslim_scores', {})
-            c = canslim_scores.get('C', 0)
-            a = canslim_scores.get('A', 0)
-            n = canslim_scores.get('N', 0)
-            s = canslim_scores.get('S', 0)
-            l = canslim_scores.get('L', 0)
-            inst = canslim_scores.get('I', 0)
-            m = canslim_scores.get('M', 0)
-            
-            report.append(f"| {i} | {symbol} | {market} | {score:.1f} | {c:.0f} | {a:.0f} | {n:.0f} | {s:.0f} | {l:.0f} | {inst:.0f} | {m:.0f} |")
-        
-        # 리포트 저장
-        report_filename = f"screening_report_{timestamp}.md"
-        with open(report_filename, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(report))
-        
-        logger.info(f"요약 리포트 생성: {report_filename}")
+    def run_daily_screening(self):
+        """매일 전체 시장 스크리닝 실행 (기존 호환성 유지)"""
+        return self.run_market_specific_screening(["KOSPI", "KOSDAQ", "NASDAQ", "SP500"])
 
 def main():
     """메인 실행 함수"""

@@ -744,6 +744,220 @@ def show_canslim_guide():
         4. 점수가 높아도 **섹터 조심 신호** 반드시 확인하세요.
         """)
 
+def show_market_dashboard():
+    """시간대별 시장 대시보드"""
+    st.header("🕐 시간대별 시장 대시보드")
+    
+    # 현재 시간 및 시장 상태 표시
+    screener = MarketScreener()
+    schedule, current_time = screener.get_market_schedule()
+    
+    # 상단 시간 정보
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.info(f"**현재 시간 (캘리포니아)**\n{current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    
+    with col2:
+        if screener.should_run_korean_screening():
+            st.success("🇰🇷 **한국 시장 스크리닝 시간**")
+        else:
+            st.warning("🇰🇷 한국 시장 대기 중")
+    
+    with col3:
+        if screener.should_run_us_screening():
+            st.success("🇺🇸 **미국 시장 스크리닝 시간**")
+        else:
+            st.warning("🇺🇸 미국 시장 대기 중")
+    
+    # 시간표 표시
+    st.subheader("⏰ 시장별 스크리닝 시간표")
+    
+    schedule_data = []
+    for market_key, market_info in schedule.items():
+        schedule_data.append({
+            "시장": market_info["name"],
+            "장 시작": market_info["open_time"],
+            "장 마감": market_info["close_time"],
+            "스크리닝 시간": f"장 시작 30분 전, 장 마감 10분 후"
+        })
+    
+    st.dataframe(pd.DataFrame(schedule_data), use_container_width=True)
+    
+    # 수동 스크리닝 실행
+    st.subheader("🚀 수동 스크리닝 실행")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write("**🇰🇷 한국 시장**")
+        if st.button("코스피 + 코스닥 스크리닝", key="korean_screening"):
+            run_specific_market_screening(["KOSPI", "KOSDAQ"])
+    
+    with col2:
+        st.write("**🇺🇸 미국 시장**")
+        if st.button("나스닥 + S&P500 스크리닝", key="us_screening"):
+            run_specific_market_screening(["NASDAQ", "SP500"])
+    
+    # 최신 결과 표시
+    display_market_dashboard_results()
+
+def run_specific_market_screening(markets):
+    """특정 시장 스크리닝 실행"""
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    try:
+        market_names = {
+            "KOSPI": "코스피",
+            "KOSDAQ": "코스닥", 
+            "NASDAQ": "나스닥",
+            "SP500": "S&P 500"
+        }
+        
+        market_display = ", ".join([market_names.get(m, m) for m in markets])
+        
+        status_text.text(f"🚀 {market_display} 스크리닝 초기화 중...")
+        screener = MarketScreener()
+        
+        progress_bar.progress(20)
+        status_text.text(f"📊 {market_display} 데이터 수집 중...")
+        
+        # 병렬 스크리닝 실행
+        with st.spinner(f"{market_display} 병렬 분석 중... (예상 소요 시간: 2-3분)"):
+            results, filename = screener.run_market_specific_screening(markets)
+        
+        progress_bar.progress(100)
+        status_text.text("✅ 스크리닝 완료!")
+        
+        if results:
+            st.success(f"🎉 {market_display} 스크리닝 완료! {len(results)}개 종목 분석 성공")
+            
+            # 결과 미리보기
+            st.subheader(f"🏆 {market_display} 상위 10개 종목")
+            preview_data = []
+            for i, result in enumerate(results[:10], 1):
+                preview_data.append({
+                    '순위': i,
+                    '종목': result.get('symbol', 'N/A'),
+                    '시장': result.get('market', 'N/A'),
+                    '점수': f"{result.get('overall_score', 0):.1f}%"
+                })
+            
+            preview_df = pd.DataFrame(preview_data)
+            st.dataframe(preview_df, use_container_width=True)
+            
+            # 변동사항 분석
+            detect_and_display_changes(results, markets, filename)
+            
+        else:
+            st.warning(f"⚠️ {market_display}에서 분석된 종목이 없습니다.")
+            
+    except Exception as e:
+        st.error(f"❌ {market_display} 스크리닝 중 오류 발생: {str(e)}")
+        progress_bar.progress(0)
+        status_text.text("❌ 스크리닝 실패")
+
+def detect_and_display_changes(current_results, markets, current_file):
+    """변동사항 감지 및 표시"""
+    screener = MarketScreener()
+    
+    # 이전 파일 찾기
+    market_pattern = "+".join(markets)
+    result_files = [f for f in os.listdir('.') if f.startswith(f'screening_{market_pattern}_') and f.endswith('.json')]
+    result_files = [f for f in result_files if f != os.path.basename(current_file)]
+    
+    if result_files:
+        # 가장 최근 파일 선택
+        previous_file = sorted(result_files, reverse=True)[0]
+        changes = screener.detect_changes(current_results, previous_file)
+        
+        st.subheader("📈 변동사항 분석")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("🆕 새로 진입", len(changes["new_entries"]))
+            if changes["new_entries"]:
+                with st.expander("새로 진입한 종목들"):
+                    for stock in changes["new_entries"][:5]:
+                        st.write(f"• {stock.get('symbol')} ({stock.get('market')}) - {stock.get('overall_score', 0):.1f}점")
+        
+        with col2:
+            st.metric("📊 점수 큰 변동", len(changes["score_changes"]))
+            if changes["score_changes"]:
+                with st.expander("점수 변동이 큰 종목들"):
+                    for change in changes["score_changes"][:5]:
+                        direction = "⬆️" if change['change'] > 0 else "⬇️"
+                        st.write(f"• {change['symbol']} {direction} {change['change']:+.1f}점 ({change['old_score']:.1f} → {change['new_score']:.1f})")
+        
+        with col3:
+            st.metric("📉 탈락", len(changes["dropped_out"]))
+            if changes["dropped_out"]:
+                with st.expander("탈락한 종목들"):
+                    for stock in changes["dropped_out"][:5]:
+                        st.write(f"• {stock.get('symbol')} ({stock.get('market')}) - {stock.get('overall_score', 0):.1f}점")
+    else:
+        st.info("💡 이전 스크리닝 결과가 없어 변동사항을 비교할 수 없습니다.")
+
+def display_market_dashboard_results():
+    """시장 대시보드 최신 결과 표시"""
+    st.subheader("📊 최신 시장별 스크리닝 결과")
+    
+    # 시장별 최신 파일 찾기
+    market_groups = {
+        "한국 시장": ["KOSPI", "KOSDAQ"],
+        "미국 시장": ["NASDAQ", "SP500"]
+    }
+    
+    for group_name, markets in market_groups.items():
+        with st.expander(f"{group_name} 최신 결과", expanded=False):
+            # 해당 시장 조합의 최신 파일 찾기
+            market_pattern = "+".join(markets)
+            result_files = [f for f in os.listdir('.') if f.startswith(f'screening_{market_pattern}_') and f.endswith('.json')]
+            
+            if result_files:
+                latest_file = sorted(result_files, reverse=True)[0]
+                
+                try:
+                    with open(latest_file, 'r', encoding='utf-8') as f:
+                        results = json.load(f)
+                    
+                    if results:
+                        # 파일명에서 날짜 추출
+                        timestamp = latest_file.split('_')[-1].replace('.json', '')
+                        date_str = f"{timestamp[:4]}-{timestamp[4:6]}-{timestamp[6:8]} {timestamp[8:10]}:{timestamp[10:12]}"
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.metric("분석 시간", date_str)
+                        with col2:
+                            st.metric("분석 종목 수", len(results))
+                        with col3:
+                            avg_score = sum(r.get('overall_score', 0) for r in results) / len(results)
+                            st.metric("평균 점수", f"{avg_score:.1f}")
+                        
+                        # 상위 5개 종목 표시
+                        st.write("**상위 5개 종목:**")
+                        top_5_data = []
+                        for i, result in enumerate(results[:5], 1):
+                            top_5_data.append({
+                                '순위': i,
+                                '종목': result.get('symbol', 'N/A'),
+                                '시장': result.get('market', 'N/A'),
+                                '점수': f"{result.get('overall_score', 0):.1f}%"
+                            })
+                        
+                        st.dataframe(pd.DataFrame(top_5_data), use_container_width=True)
+                    else:
+                        st.warning("결과가 비어있습니다.")
+                        
+                except Exception as e:
+                    st.error(f"결과 로딩 실패: {str(e)}")
+            else:
+                st.info(f"{group_name}의 스크리닝 결과가 아직 없습니다.")
+
 # 메인 타이틀
 st.title("📈 CANSLIM 주도주 분석기")
 st.markdown("**William O'Neil의 CANSLIM 투자 기법 기반 정량적 주식 분석 도구**")
@@ -753,7 +967,7 @@ st.sidebar.header("📋 메뉴")
 
 menu = st.sidebar.selectbox(
     "분석 메뉴 선택",
-    ["🎯 개별 주식 분석", "🔍 시장 스크리닝", "📊 스크리닝 이력", "⚠️ 섹터 위험 분석", "📋 종합 리포트", "📚 사용 가이드"]
+    ["🎯 개별 주식 분석", "🔍 시장 스크리닝", "📊 스크리닝 이력", "⚠️ 섹터 위험 분석", "📋 종합 리포트", "📚 사용 가이드", "🕐 시간대별 시장 대시보드"]
 )
 
 # 벤치마크 선택
@@ -787,6 +1001,8 @@ elif menu == "📋 종합 리포트":
     show_comprehensive_report()
 elif menu == "📚 사용 가이드":
     show_canslim_guide()
+elif menu == "🕐 시간대별 시장 대시보드":
+    show_market_dashboard()
 
 # 푸터
 st.markdown("---")

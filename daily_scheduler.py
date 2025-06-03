@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-CANSLIM 매일 자동 스크리닝 스케줄러
-매일 정해진 시간에 자동으로 시장 스크리닝을 실행
+CANSLIM 시간대별 자동 스크리닝 스케줄러
+캘리포니아 시간 기준으로 한국/미국 시장별 최적 시간에 자동 실행
 """
 
 import schedule
 import time
 import logging
 from datetime import datetime
-import os
-import sys
+import pytz
 from market_screener import MarketScreener
 
 # 로깅 설정
@@ -23,89 +22,96 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class DailyScheduler:
-    def __init__(self):
-        self.screener = MarketScreener()
+def run_korean_market_screening():
+    """한국 시장 스크리닝 실행"""
+    try:
+        logger.info("=== 한국 시장 스크리닝 시작 ===")
+        screener = MarketScreener()
+        results, filename = screener.run_market_specific_screening(["KOSPI", "KOSDAQ"])
+        logger.info(f"한국 시장 스크리닝 완료: {len(results)}개 종목, 파일: {filename}")
+    except Exception as e:
+        logger.error(f"한국 시장 스크리닝 실패: {str(e)}")
+
+def run_us_market_screening():
+    """미국 시장 스크리닝 실행"""
+    try:
+        logger.info("=== 미국 시장 스크리닝 시작 ===")
+        screener = MarketScreener()
+        results, filename = screener.run_market_specific_screening(["NASDAQ", "SP500"])
+        logger.info(f"미국 시장 스크리닝 완료: {len(results)}개 종목, 파일: {filename}")
+    except Exception as e:
+        logger.error(f"미국 시장 스크리닝 실패: {str(e)}")
+
+def setup_scheduler():
+    """스케줄러 설정 (캘리포니아 시간 기준)"""
     
-    def run_daily_screening(self):
-        """매일 스크리닝 실행"""
-        try:
-            logger.info("=== 매일 자동 스크리닝 시작 ===")
-            
-            # 주말 제외 (월-금만 실행)
-            weekday = datetime.now().weekday()
-            if weekday >= 5:  # 토요일(5), 일요일(6)
-                logger.info("주말이므로 스크리닝을 건너뜁니다.")
-                return
-            
-            # 스크리닝 실행
-            results = self.screener.run_daily_screening()
-            
-            if results:
-                logger.info(f"✅ 자동 스크리닝 완료! {len(results)}개 종목 분석")
-                
-                # 상위 5개 종목 로그
-                logger.info("상위 5개 종목:")
-                for i, result in enumerate(results[:5], 1):
-                    symbol = result.get('symbol', 'N/A')
-                    market = result.get('market', 'N/A')
-                    score = result.get('overall_score', 0)
-                    logger.info(f"  {i}. {symbol} ({market}) - 점수: {score:.1f}")
-            else:
-                logger.warning("스크리닝 결과가 없습니다.")
-                
-        except Exception as e:
-            logger.error(f"자동 스크리닝 중 오류 발생: {str(e)}")
+    # 한국 시장 스케줄
+    # 장 시작 30분 전: 15:30 (한국 09:00 - 30분)
+    # 장 마감 10분 후: 22:40 (한국 15:30 + 10분)
+    schedule.every().monday.at("15:30").do(run_korean_market_screening).tag("korean_premarket")
+    schedule.every().tuesday.at("15:30").do(run_korean_market_screening).tag("korean_premarket")
+    schedule.every().wednesday.at("15:30").do(run_korean_market_screening).tag("korean_premarket")
+    schedule.every().thursday.at("15:30").do(run_korean_market_screening).tag("korean_premarket")
+    schedule.every().friday.at("15:30").do(run_korean_market_screening).tag("korean_premarket")
     
-    def start_scheduler(self):
-        """스케줄러 시작"""
-        logger.info("CANSLIM 자동 스크리닝 스케줄러 시작")
-        
-        # 매일 여러 시간에 스크리닝 실행
-        schedule.every().day.at("09:30").do(self.run_daily_screening)  # 한국 시장 개장 후
-        schedule.every().day.at("15:30").do(self.run_daily_screening)  # 한국 시장 마감 후
-        schedule.every().day.at("23:30").do(self.run_daily_screening)  # 미국 시장 마감 후
-        
-        logger.info("스케줄 등록 완료:")
-        logger.info("- 매일 09:30 (한국 시장 개장 후)")
-        logger.info("- 매일 15:30 (한국 시장 마감 후)")  
-        logger.info("- 매일 23:30 (미국 시장 마감 후)")
-        
-        # 무한 루프로 스케줄 실행
+    schedule.every().monday.at("22:40").do(run_korean_market_screening).tag("korean_postmarket")
+    schedule.every().tuesday.at("22:40").do(run_korean_market_screening).tag("korean_postmarket")
+    schedule.every().wednesday.at("22:40").do(run_korean_market_screening).tag("korean_postmarket")
+    schedule.every().thursday.at("22:40").do(run_korean_market_screening).tag("korean_postmarket")
+    schedule.every().friday.at("22:40").do(run_korean_market_screening).tag("korean_postmarket")
+    
+    # 미국 시장 스케줄
+    # 장 시작 30분 전: 06:00 (동부 09:30 - 30분)
+    # 장 마감 10분 후: 13:10 (동부 16:00 + 10분)
+    schedule.every().monday.at("06:00").do(run_us_market_screening).tag("us_premarket")
+    schedule.every().tuesday.at("06:00").do(run_us_market_screening).tag("us_premarket")
+    schedule.every().wednesday.at("06:00").do(run_us_market_screening).tag("us_premarket")
+    schedule.every().thursday.at("06:00").do(run_us_market_screening).tag("us_premarket")
+    schedule.every().friday.at("06:00").do(run_us_market_screening).tag("us_premarket")
+    
+    schedule.every().monday.at("13:10").do(run_us_market_screening).tag("us_postmarket")
+    schedule.every().tuesday.at("13:10").do(run_us_market_screening).tag("us_postmarket")
+    schedule.every().wednesday.at("13:10").do(run_us_market_screening).tag("us_postmarket")
+    schedule.every().thursday.at("13:10").do(run_us_market_screening).tag("us_postmarket")
+    schedule.every().friday.at("13:10").do(run_us_market_screening).tag("us_postmarket")
+    
+    logger.info("시간대별 스케줄러 설정 완료")
+    logger.info("한국 시장: 15:30 (장 시작 전), 22:40 (장 마감 후)")
+    logger.info("미국 시장: 06:00 (장 시작 전), 13:10 (장 마감 후)")
+
+def check_current_time():
+    """현재 시간과 다음 스케줄 확인"""
+    ca_tz = pytz.timezone('America/Los_Angeles')
+    current_time = ca_tz.localize(datetime.now())
+    
+    logger.info(f"현재 시간 (캘리포니아): {current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    
+    # 다음 스케줄 확인
+    next_run = schedule.next_run()
+    if next_run:
+        logger.info(f"다음 스크리닝 예정: {next_run}")
+
+def run_scheduler(daemon_mode=False):
+    """스케줄러 실행"""
+    setup_scheduler()
+    check_current_time()
+    
+    if daemon_mode:
+        logger.info("데몬 모드로 스케줄러 시작...")
+        while True:
+            schedule.run_pending()
+            time.sleep(60)  # 1분마다 체크
+    else:
+        logger.info("대화형 모드로 스케줄러 시작... (Ctrl+C로 종료)")
         try:
             while True:
                 schedule.run_pending()
-                time.sleep(60)  # 1분마다 체크
+                time.sleep(30)  # 30초마다 체크
         except KeyboardInterrupt:
             logger.info("스케줄러 종료")
 
-def run_once():
-    """즉시 1회 실행"""
-    scheduler = DailyScheduler()
-    scheduler.run_daily_screening()
-
-def main():
-    """메인 함수"""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description='CANSLIM 자동 스크리닝 스케줄러')
-    parser.add_argument('--once', action='store_true', help='즉시 1회 실행')
-    parser.add_argument('--daemon', action='store_true', help='데몬 모드로 실행')
-    
-    args = parser.parse_args()
-    
-    if args.once:
-        run_once()
-    else:
-        scheduler = DailyScheduler()
-        if args.daemon:
-            # 백그라운드 데몬으로 실행
-            import daemon
-            with daemon.DaemonContext():
-                scheduler.start_scheduler()
-        else:
-            # 포그라운드에서 실행
-            scheduler.start_scheduler()
-
 if __name__ == "__main__":
-    main() 
+    import sys
+    
+    daemon_mode = "--daemon" in sys.argv
+    run_scheduler(daemon_mode) 
